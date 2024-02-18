@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Standalone flexible monthly mortgage calculator" />
+    <title>Mortgage calculator</title>
+  <meta
+ http-equiv="Content-Security-Policy"
+ content="default-src 'self'; img-src 'self' data:; script-src 'sha256-KCA6nF6/wofsFZYdV0eFsrNRnbkJ6SIXE6EPnK2yCA0='; style-src 'sha256-mNw696De1+XzxXF0p47qjMjUcDv8p8x0OfgeMiwNzsY=';"
+/><style>:root {
+  --font-color: #111;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --font-color: rgba(255, 255, 255, 0.75);
+  }
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 1fr;
+  font-family: system-ui;
+  font-size: 14px;
+  color: var(--font-color);
+}
+</style><script async type="module">function addDomContentLoadedHandler(handler) {
+    if (document.readyState !== 'loading') {
+        handler();
+        return;
+    }
+    document.addEventListener('DOMContentLoaded', handler);
+}
+function init() {
+    addDomContentLoadedHandler(onDomContentLoad);
+}
+function onDomContentLoad() {
+    console.log('DOMContentLoaded');
+}
+init();</script></head>
+  <body></body>
+</html>

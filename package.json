@@ -1,0 +1,31 @@
+{
+  "name": "mortgage-calculator",
+  "version": "0.0.1",
+  "description": "Standalone flexible monthly mortgage calculator. Works offline, does not contain advertising",
+  "author": "uid11",
+  "bugs": "https://github.com/uid11/mortgage-calculator/issues",
+  "devDependencies": {
+    "@types/node": ">=20",
+    "prettier": ">=3.1",
+    "typescript": ">=5.3"
+  },
+  "homepage": "https://github.com/uid11/mortgage-calculator#readme",
+  "keywords": [
+    "calculator",
+    "mortgage"
+  ],
+  "license": "MIT",
+  "packageManager": "npm@10",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uid11/mortgage-calculator"
+  },
+  "scripts": {
+    "build": "export _START=$(date +%s%3N) && npm run prettier && tsc && node ./build/scripts/build.js",
+    "prebuild": "rm -fr ./build/*",
+    "prerelease": "npm test && cp LICENSE package.json README.md ./build/src && rm ./build/src/types.js",
+    "prettier": "prettier --cache --cache-strategy=content --write . !docs",
+    "test": "npm run build"
+  },
+  "type": "module"
+}

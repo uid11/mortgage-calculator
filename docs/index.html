@@ -7,7 +7,7 @@
     <title>Mortgage calculator</title>
   <meta
  http-equiv="Content-Security-Policy"
- content="default-src 'self'; img-src 'self' data:; script-src 'sha256-Z4XmmSOxuxXLgMrvLcyPP59NNrsHWq+i0jgSSLSSTao='; style-src 'sha256-mNw696De1+XzxXF0p47qjMjUcDv8p8x0OfgeMiwNzsY=';"
+ content="default-src 'self'; img-src 'self' data:; script-src 'sha256-FIdR9yWMM/3cbSfRcZnSaILuIKPaZN+vZsVPS73kkVY='; style-src 'sha256-mNw696De1+XzxXF0p47qjMjUcDv8p8x0OfgeMiwNzsY=';"
 /><style>:root {
   --font-color: #111;
 }
@@ -37,9 +37,15 @@ body {
     }
     document.addEventListener('DOMContentLoaded', handler);
 }
-function compileComponent(compile) {
-    void compile;
-    return {};
+function compileComponent(component) {
+    const proxyTree = getProxyTree();
+    const jsx = component(proxyTree.proxy);
+    const { domFragment, paths, preslotsNodes } = parseJsx(jsx);
+    clearProxies(proxyTree);
+    const domTree = getTreeFromInvertedPaths(paths);
+    const { nodeIndexes, nodePaths } = getNodePathsFromTree(domTree);
+    const slotsTree = getSlotsTreeFromPreslotsTree(proxyTree, nodeIndexes, preslotsNodes);
+    return { domFragment, nodePaths, slotsTree };
 }
 function createJsx() {
     const JSX_ELEMENT_KEY = Symbol.for('mortgage-calculator:JSX_ELEMENT_KEY');
@@ -54,6 +60,105 @@ function createJsx() {
     });
     const Fragment = () => { };
     return { createElement, Fragment, JSX_ELEMENT_KEY };
+}
+function createParseJsx() {
+    var createPath = (key = '', parent) => ({
+        children: undefined,
+        indexInPaths: undefined,
+        key,
+        parent,
+    });
+    var getPreslots = (value) => {
+        if (value == null) {
+            return;
+        }
+        const target = value[PROXY_TARGET_KEY];
+        if (target === undefined) {
+            return;
+        }
+        const { node } = target;
+        let { slots } = node;
+        if (slots === undefined) {
+            slots = node.slots = [];
+            preslotsNodes.push(node);
+        }
+        return slots;
+    };
+    var parseToNode = (jsx, domNode, path) => {
+        if (jsx == null) {
+            return;
+        }
+        if (typeof jsx !== 'object') {
+            domNode.append(jsx);
+            return;
+        }
+        if (JSX_ELEMENT_KEY in jsx) {
+            const { properties, type } = jsx;
+            if (type === Fragment) {
+                parseToNode(properties && properties.children, domNode, path);
+                return;
+            }
+            const domElement = document.createElement(type);
+            const key = String(domNode.childNodes.length);
+            domNode.append(domElement);
+            const newPath = createPath(key, path);
+            if (properties !== null) {
+                let shouldAddPath = false;
+                for (const name in properties) {
+                    const value = properties[name];
+                    const preslots = getPreslots(value);
+                    if (preslots === undefined) {
+                        domElement.setAttribute(name, value);
+                    }
+                    else {
+                        preslots.push({ name, node: paths.length, render: renderAttribute });
+                        shouldAddPath = true;
+                    }
+                }
+                if (shouldAddPath) {
+                    paths.push(newPath);
+                }
+                parseToNode(properties.children, domElement, newPath);
+            }
+            return;
+        }
+        const preslots = getPreslots(jsx);
+        if (preslots !== undefined) {
+            const key = String(domNode.childNodes.length);
+            domNode.append('');
+            preslots.push({ node: paths.length, render: renderChild });
+            paths.push(createPath(key, path));
+            return;
+        }
+        const { length } = jsx;
+        if (length > 0 && Number.isInteger(length) && length < 1000000) {
+            for (let index = 0; index < length; index += 1) {
+                const child = jsx[index];
+                parseToNode(child, domNode, path);
+            }
+            return;
+        }
+        if (typeof jsx[Symbol.iterator] === 'function') {
+            for (const child of jsx) {
+                parseToNode(child, domNode, path);
+            }
+            return;
+        }
+        domNode.append(jsx);
+    };
+    var paths;
+    var preslotsNodes;
+    const parseJsx = (jsx) => {
+        paths = [];
+        preslotsNodes = [];
+        const domFragment = document.createDocumentFragment();
+        parseToNode(jsx, domFragment, createPath());
+        const result = { domFragment, paths, preslotsNodes };
+        paths = undefined;
+        preslotsNodes = undefined;
+        return result;
+    };
+    return parseJsx;
 }
 function createProxyApi() {
     const emptyArray = [];
@@ -78,7 +183,7 @@ function createProxyApi() {
                 child = node.childrenByKey[key];
             }
             if (child === undefined) {
-                child = getProxyNode(key);
+                child = getProxyTree(key, node, target.targets);
                 node.children.push(child);
                 node.childrenByKey[key] = child;
             }
@@ -88,62 +193,99 @@ function createProxyApi() {
         preventExtensions: getFalse,
         set: getFalse,
     };
-    const clearProxy = (proxy) => {
-        const target = proxy[PROXY_TARGET_KEY];
-        target.node = undefined;
-        if (proxiesPool.length < maxProxiesPoolLength) {
-            proxiesPool.push(proxy);
+    const clearProxies = (tree) => {
+        const { targets } = tree.proxy[PROXY_TARGET_KEY];
+        if (targets === undefined) {
+            return;
+        }
+        for (const target of targets) {
+            const { proxy } = target.node;
+            target.node = undefined;
+            target.targets = undefined;
+            if (proxiesPool.length < maxProxiesPoolLength) {
+                proxiesPool.push(proxy);
+            }
         }
     };
-    const getProxyNode = (key = '') => {
+    const getProxyTree = (key = '', parent, targets = []) => {
         const proxy = proxiesPool.length > 0
             ? proxiesPool.pop()
-            : new Proxy({ node: undefined }, handler);
-        const node = { children: undefined, childrenByKey: undefined, key, proxy };
+            : new Proxy({ node: undefined, targets }, handler);
+        const node = {
+            children: undefined,
+            childrenByKey: undefined,
+            key,
+            parent,
+            proxy,
+            slots: undefined,
+        };
         const target = proxy[PROXY_TARGET_KEY];
         target.node = node;
+        targets.push(target);
         return node;
     };
-    return { clearProxy, getProxyNode, PROXY_TARGET_KEY };
+    return { clearProxies, getProxyTree, PROXY_TARGET_KEY };
 }
 function getNodePathsFromTree(tree) {
     const nodeIndexes = [];
     const nodePaths = [];
-    const addNodePaths = (tree, nodeIndex) => {
-        for (const treeNode of tree) {
-            let currentNode = treeNode;
+    const processNodes = (nodes, nodeIndex) => {
+        for (const startNode of nodes) {
+            let node = startNode;
             const nodePath = [nodeIndex];
             for (let index = 0; index < 10000; index += 1) {
-                nodePath.push(currentNode.key);
-                if (currentNode.children === undefined ||
-                    currentNode.children.length !== 1 ||
-                    currentNode.indexInPaths !== undefined) {
+                nodePath.push(node.key);
+                if (node.children === undefined ||
+                    node.children.length !== 1 ||
+                    node.indexInPaths !== undefined) {
                     break;
                 }
-                currentNode = currentNode.children[0];
+                node = node.children[0];
             }
             const newNodeIndex = String(nodePaths.push(nodePath));
-            if (currentNode.indexInPaths !== undefined) {
-                nodeIndexes[currentNode.indexInPaths] = newNodeIndex;
+            if (node.indexInPaths !== undefined) {
+                nodeIndexes[node.indexInPaths] = newNodeIndex;
             }
-            if (currentNode.children !== undefined && currentNode.children.length > 0) {
-                addNodePaths(currentNode.children, newNodeIndex);
+            if (node.children !== undefined && node.children.length > 0) {
+                processNodes(node.children, newNodeIndex);
             }
         }
     };
-    addNodePaths(tree, '0');
+    if (tree.children !== undefined) {
+        processNodes(tree.children, '0');
+    }
     return { nodeIndexes, nodePaths };
 }
-function getTreeFromInvertedPaths(invertedPaths) {
-    let treeRoot;
-    for (let indexInPaths = 0; indexInPaths < invertedPaths.length; indexInPaths += 1) {
-        let path = invertedPaths[indexInPaths];
+function getSlotsTreeFromPreslotsTree(preslotsTree, nodeIndexes, preslotsNodes) {
+    preslotsTree.childrenByKey = undefined;
+    preslotsTree.proxy = undefined;
+    for (const preslotsNode of preslotsNodes) {
+        let node = preslotsNode;
+        setNodeIndexesToPreslots(node.slots, nodeIndexes);
+        for (let index = 0; index < 10000; index += 1) {
+            const { parent } = node;
+            if (parent === undefined) {
+                break;
+            }
+            node.childrenByKey = undefined;
+            node.parent = undefined;
+            node.proxy = undefined;
+            node = parent;
+        }
+    }
+    removeExtraNodes(preslotsTree);
+    return preslotsTree;
+}
+function getTreeFromInvertedPaths(paths) {
+    let tree;
+    for (let indexInPaths = 0; indexInPaths < paths.length; indexInPaths += 1) {
+        let path = paths[indexInPaths];
         path.indexInPaths = indexInPaths;
         for (let index = 0; index < 10000; index += 1) {
             const { parent } = path;
             if (parent === undefined) {
-                if (treeRoot === undefined) {
-                    treeRoot = path;
+                if (tree === undefined) {
+                    tree = path;
                 }
                 break;
             }
@@ -155,43 +297,7 @@ function getTreeFromInvertedPaths(invertedPaths) {
             path = parent;
         }
     }
-    return treeRoot === undefined ? undefined : treeRoot.children;
-}
-function getTreeFromPaths(paths) {
-    const allProcessedPaths = paths.map((path, indexInPaths) => ({
-        indexInPaths,
-        path,
-    }));
-    const getTree = (listOfProcessedPaths, index) => {
-        const preNodesByKeys = { __proto__: null };
-        for (const processedPath of listOfProcessedPaths) {
-            const key = processedPath.path[index];
-            if (key === undefined) {
-                continue;
-            }
-            let preNode = preNodesByKeys[key];
-            if (preNode === undefined) {
-                preNode = { indexInPaths: undefined, listOfProcessedPaths: [] };
-                preNodesByKeys[key] = preNode;
-            }
-            if (processedPath.path.length - 1 === index) {
-                preNode.indexInPaths = processedPath.indexInPaths;
-            }
-            else {
-                preNode.listOfProcessedPaths.push(processedPath);
-            }
-        }
-        const entries = Object.entries(preNodesByKeys);
-        if (entries.length === 0) {
-            return;
-        }
-        return entries.map(([key, { indexInPaths, listOfProcessedPaths }]) => ({
-            children: getTree(listOfProcessedPaths, index + 1),
-            indexInPaths,
-            key,
-        }));
-    };
-    return getTree(allProcessedPaths, 0);
+    return tree;
 }
 function init() {
     addDomContentLoadedHandler(onDomContentLoad);
@@ -199,48 +305,39 @@ function init() {
 function onDomContentLoad() {
     console.log('DOMContentLoaded');
 }
-function processJsxChildren(children, domNode, invertedPath) {
-    if (typeof children !== 'object') {
-        domNode.append(String(children));
+function removeExtraNodes(preslotsTree) {
+    const { children } = preslotsTree;
+    if (children === undefined) {
         return;
     }
-    if (jsx.JSX_ELEMENT_KEY in children) {
-        const domElement = document.createElement(children.type);
-        const key = String(domNode.childNodes.length);
-        domNode.append(domElement);
-        const path = {
-            children: undefined,
-            indexInPaths: undefined,
-            key,
-            parent: invertedPath,
-        };
-        const { properties } = children;
-        if (properties !== null && properties.children != null) {
-            processJsxChildren(properties.children, domElement, path);
-        }
-        // TODO: add attributes and AttributeSlot
-        return;
-    }
-    // TODO: support TextNodeSlot
-    const { length } = children;
-    if (length > 0 && Number.isInteger(length) && length < 1000000) {
-        for (let index = 0; index < length; index += 1) {
-            const child = children[index];
-            if (child != null) {
-                processJsxChildren(child, domNode, invertedPath);
+    let newChildren;
+    for (let index = 0; index < children.length; index += 1) {
+        const child = children[index];
+        if (child.parent === undefined) {
+            removeExtraNodes(child);
+            if (newChildren !== undefined) {
+                newChildren.push(child);
             }
         }
-        return;
-    }
-    if (typeof children[Symbol.iterator] === 'function') {
-        for (const child of children) {
-            if (child != null) {
-                processJsxChildren(child, domNode, invertedPath);
-            }
+        else if (newChildren === undefined) {
+            newChildren = children.slice(0, index);
         }
-        return;
     }
-    domNode.append(children);
+    if (newChildren !== undefined) {
+        if (newChildren.length > 0) {
+            preslotsTree.children = newChildren;
+        }
+        else {
+            preslotsTree.children = undefined;
+        }
+    }
+}
+function () { }
+function () { }
+function setNodeIndexesToPreslots(preslots, nodeIndexes) {
+    for (const preslot of preslots) {
+        preslot.node = nodeIndexes[preslot.node];
+    }
 }
 init();</script></head>
   <body></body>

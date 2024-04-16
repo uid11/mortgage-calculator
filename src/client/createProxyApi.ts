@@ -7,13 +7,13 @@ import type {
 } from '../types';
 
 type Result = Readonly<{
-  clearProxy: (proxy: ProxyObject) => void;
-  getProxyNode: (key?: string | symbol) => ProxyTree[0];
+  clearProxies: (tree: ProxyTree) => void;
+  getProxyTree: (key?: string | symbol, parent?: ProxyTree, targets?: ProxyTarget[]) => ProxyTree;
   PROXY_TARGET_KEY: typeof TARGET_KEY;
 }>;
 
 /**
- * Creates functions `getProxyTreeRoot`, `clearProxy` and key `PROXY_TARGET_KEY`.
+ * Creates functions `clearProxies`, `getProxyTree` and key `PROXY_TARGET_KEY`.
  * This client function should not use scope variables (except other client functions).
  */
 export function createProxyApi(): Result {
@@ -33,18 +33,18 @@ export function createProxyApi(): Result {
         return target;
       }
 
-      const node: Mutable<ProxyTree[0]> = target.node!;
-      let child: ProxyTree[0] | undefined;
+      const node: Mutable<ProxyTree> = target.node!;
+      let child: ProxyTree | undefined;
 
       if (node.children === undefined) {
-        node.children = [] as unknown as ProxyTree;
-        node.childrenByKey = {__proto__: null as unknown as ProxyTree[0]};
+        node.children = [] as unknown as [ProxyTree, ...ProxyTree[]];
+        node.childrenByKey = {__proto__: null as unknown as ProxyTree};
       } else {
         child = node.childrenByKey![key];
       }
 
       if (child === undefined) {
-        child = getProxyNode(key);
+        child = getProxyTree(key, node, target.targets!);
 
         (node.children as Mutable<typeof node.children>).push(child);
         (node.childrenByKey as Mutable<typeof node.childrenByKey>)![key] = child;
@@ -57,28 +57,45 @@ export function createProxyApi(): Result {
     set: getFalse,
   };
 
-  const clearProxy = (proxy: ProxyObject): void => {
-    const target = proxy[PROXY_TARGET_KEY];
+  const clearProxies: Result['clearProxies'] = (tree) => {
+    const {targets} = tree.proxy[PROXY_TARGET_KEY];
 
-    target.node = undefined;
+    if (targets === undefined) {
+      return;
+    }
 
-    if (proxiesPool.length < maxProxiesPoolLength) {
-      proxiesPool.push(proxy);
+    for (const target of targets) {
+      const {proxy} = target.node!;
+
+      target.node = undefined;
+      target.targets = undefined;
+
+      if (proxiesPool.length < maxProxiesPoolLength) {
+        proxiesPool.push(proxy);
+      }
     }
   };
 
-  const getProxyNode = (key: string | symbol = ''): ProxyTree[0] => {
+  const getProxyTree: Result['getProxyTree'] = (key = '', parent, targets = []) => {
     const proxy =
       proxiesPool.length > 0
         ? proxiesPool.pop()!
-        : (new Proxy({node: undefined}, handler) as unknown as ProxyObject);
-    const node: ProxyTree[0] = {children: undefined, childrenByKey: undefined, key, proxy};
+        : (new Proxy({node: undefined, targets}, handler) as unknown as ProxyObject);
+    const node: ProxyTree = {
+      children: undefined,
+      childrenByKey: undefined,
+      key,
+      parent,
+      proxy,
+      slots: undefined,
+    };
     const target = proxy[PROXY_TARGET_KEY];
 
     target.node = node;
+    targets.push(target);
 
     return node;
   };
 
-  return {clearProxy, getProxyNode, PROXY_TARGET_KEY};
+  return {clearProxies, getProxyTree, PROXY_TARGET_KEY};
 }

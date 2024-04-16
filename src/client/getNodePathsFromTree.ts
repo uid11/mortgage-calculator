@@ -1,9 +1,8 @@
-import type {DomTree, NodeIndex, NodePath} from '../types';
+import type {DomTree, Mutable, NodeIndex, NodePath} from '../types';
 
-type Result = Readonly<{
-  nodeIndexes: readonly NodeIndex[];
-  nodePaths: readonly NodePath[];
-}>;
+type ProcessNodes = (nodes: readonly [DomTree, ...DomTree[]], nodeIndex: NodeIndex) => void;
+
+type Result = Readonly<{nodeIndexes: readonly NodeIndex[]; nodePaths: readonly NodePath[]}>;
 
 /**
  * Get optimized `NodePath` from tree of path nodes.
@@ -13,38 +12,40 @@ export function getNodePathsFromTree(tree: DomTree): Result {
   const nodeIndexes: NodeIndex[] = [];
   const nodePaths: NodePath[] = [];
 
-  const addNodePaths = (tree: DomTree, nodeIndex: NodeIndex): void => {
-    for (const treeNode of tree) {
-      let currentNode = treeNode;
-      const nodePath: [NodeIndex, ...string[]] = [nodeIndex];
+  const processNodes: ProcessNodes = (nodes, nodeIndex) => {
+    for (const startNode of nodes) {
+      let node = startNode;
+      const nodePath: Mutable<NodePath> = [nodeIndex];
 
       for (let index = 0; index < 10_000; index += 1) {
-        nodePath.push(currentNode.key);
+        nodePath.push(node.key);
 
         if (
-          currentNode.children === undefined ||
-          currentNode.children.length !== 1 ||
-          currentNode.indexInPaths !== undefined
+          node.children === undefined ||
+          node.children.length !== 1 ||
+          node.indexInPaths !== undefined
         ) {
           break;
         }
 
-        currentNode = currentNode.children[0]!;
+        node = node.children[0]!;
       }
 
       const newNodeIndex = String(nodePaths.push(nodePath)) as NodeIndex;
 
-      if (currentNode.indexInPaths !== undefined) {
-        nodeIndexes[currentNode.indexInPaths] = newNodeIndex;
+      if (node.indexInPaths !== undefined) {
+        nodeIndexes[node.indexInPaths] = newNodeIndex;
       }
 
-      if (currentNode.children !== undefined && currentNode.children.length > 0) {
-        addNodePaths(currentNode.children, newNodeIndex);
+      if (node.children !== undefined && node.children.length > 0) {
+        processNodes(node.children, newNodeIndex);
       }
     }
   };
 
-  addNodePaths(tree, '0' as NodeIndex);
+  if (tree.children !== undefined) {
+    processNodes(tree.children, '0' as NodeIndex);
+  }
 
   return {nodeIndexes, nodePaths};
 }

@@ -1,27 +1,25 @@
 import type {DomTree, InvertedPath, Mutable} from '../types';
 
-type TreeNode = Mutable<DomTree[0]>;
+type Tree = Omit<Mutable<DomTree>, 'children'> & {children: DomTree[] | undefined};
 
 /**
  * Get tree of path nodes from array of inverted paths.
  * This client function should not use scope variables (except other client functions).
  */
-export function getTreeFromInvertedPaths(
-  invertedPaths: readonly InvertedPath[],
-): DomTree | undefined {
-  let treeRoot: TreeNode | undefined;
+export function getTreeFromInvertedPaths(paths: readonly InvertedPath[]): DomTree | undefined {
+  let tree: DomTree | undefined;
 
-  for (let indexInPaths = 0; indexInPaths < invertedPaths.length; indexInPaths += 1) {
-    let path = invertedPaths[indexInPaths]!;
+  for (let indexInPaths = 0; indexInPaths < paths.length; indexInPaths += 1) {
+    let path = paths[indexInPaths]!;
 
-    (path as TreeNode).indexInPaths = indexInPaths;
+    (path as Tree).indexInPaths = indexInPaths;
 
     for (let index = 0; index < 10_000; index += 1) {
       const {parent} = path;
 
       if (parent === undefined) {
-        if (treeRoot === undefined) {
-          treeRoot = path;
+        if (tree === undefined) {
+          tree = path;
         }
 
         break;
@@ -30,14 +28,14 @@ export function getTreeFromInvertedPaths(
       (path as Mutable<typeof path>).parent = undefined;
 
       if (parent.children === undefined) {
-        (parent as TreeNode).children = [] as unknown as [TreeNode, ...TreeNode[]];
+        (parent as Tree).children = [];
       }
 
-      (parent as {children: TreeNode[] | undefined}).children!.push(path as TreeNode);
+      (parent as Tree).children!.push(path as DomTree);
 
       path = parent;
     }
   }
 
-  return treeRoot === undefined ? undefined : treeRoot.children;
+  return tree;
 }
